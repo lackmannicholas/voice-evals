@@ -1,0 +1,59 @@
+# voice-evals default configuration.
+# Judge is OFF by default => this profile is local-only safe (no network, no keys).
+# Set GEMINI_API_KEY in the environment and add scorers under `scorers.judge` to enable it.
+
+ingest:
+  target_sr: 16000
+  normalize_dbfs: null            # null = leave gain untouched (level is signal)
+  accept_extensions: [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
+
+acoustic:
+  window_s: 20.0                  # MOS predictors expect short clips; long calls
+  min_window_s: 3.0               # are scored in windows and aggregated...
+  aggregate: median               # ...by median (robust to a few bad windows)
+
+scorers:
+  acoustic: [dnsmos, nisqa, utmos, squim]
+  dynamics: [latency, turn_taking, barge_in]
+  judge: []                       # empty by default => local_only safe
+
+dynamics:
+  vad_backend: ten                # ten | silero  (TEN VAD bundles its model, runs offline)
+  gap_threshold_s: 1.5
+  bargein_success_window_s: 1.5
+  min_caller_utterance_ms: 100.0
+
+judge:
+  backend: gemini                 # gemini | local_omni
+  model: gemini-2.5-pro
+  judged_channel: agent_only      # agent_only | mono | caller_only
+  domain: "a property leasing / resident-support phone call"
+  max_concurrency: 4
+  exclude_if_model_family_matches: true
+  judge_model_family: gemini
+  rubric_path: config/rubric.default.txt
+  system_prompt_path: config/judge_system.txt
+
+gates:
+  absolute:
+    dnsmos_ovrl: {min: 2.8, warn: 3.2}
+    dnsmos_sig: {min: 3.0, warn: 3.3}
+    nisqa_mos: {min: 2.8, warn: 3.2}
+    nisqa_discontinuity: {min: 3.0, warn: 3.5}
+    utmos: {min: 3.0, warn: 3.3}
+    squim_pesq: {min: 2.0, warn: 2.5}
+    latency_p95_s: {max: 3.0, warn: 2.5}
+    latency_p50_s: {max: 1.7}
+    bargein_success_rate: {min: 0.90}
+    # Judge gates are all `min` floors (5 = best). Enforce only dimensions whose
+    # calibration kappa clears the bar; treat the rest as advisory.
+    # judge_fluency: {min: 3}
+    # judge_naturalness: {min: 3}
+  regression:
+    enabled: true
+    baseline: previous
+    group_by: [agent_version]
+    max_delta:
+      dnsmos_ovrl: 0.15
+      utmos: 0.15
+      nisqa_mos: 0.15

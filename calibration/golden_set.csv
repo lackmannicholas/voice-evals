@@ -1,0 +1,15 @@
+clip_id,dimension,human_score
+# Fill this in by listening to ~30-50 clips and rating each dimension 1-5 using the
+# SAME anchors as config/rubric.default.txt (put the anchor text in your labeling
+# instructions so human and judge share definitions).
+#
+# clip_id may be the content-hash clip_id (from `voice-evals ingest`) OR a source
+# filename / stem — it is resolved against the corpus.
+# dimension is one of: naturalness, prosody, fluency, pace, responsiveness,
+#                      emotional_alignment, intelligibility
+# human_score is an integer 1-5 (5 = best).
+#
+# Example rows (delete and replace with real labels):
+# call_2026-06-25_abc123,naturalness,4
+# call_2026-06-25_abc123,fluency,5
+# call_2026-06-25_abc123,prosody,3

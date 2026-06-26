@@ -1,0 +1,42 @@
+# OpenAI native-audio judge profile (explicit opt-in — sends audio to OpenAI).
+# Requires:  export OPENAI_API_KEY=sk-...
+#   voice-evals run --config config/judge.openai.yaml
+#
+# SELF-ENHANCEMENT BIAS: if the agent itself is OpenAI (e.g. gpt-realtime), an
+# OpenAI judge will inflate scores. Treat results as a smoke test, not a verdict.
+
+ingest:
+  target_sr: 16000
+
+acoustic:
+  window_s: 20.0
+  aggregate: median
+
+scorers:
+  acoustic: [dnsmos, utmos, squim]     # nisqa omitted (needs vendored weights)
+  dynamics: [latency, turn_taking, barge_in]
+  judge: [audio_judge]
+
+dynamics:
+  vad_backend: ten
+
+judge:
+  backend: openai
+  model: gpt-audio                      # audio-capable chat model (gpt-audio family)
+  judged_channel: mono                  # FULL conversation: hear caller + agent, flow, frustration
+  domain: "a property leasing / resident-support phone call"
+  max_concurrency: 2
+  max_audio_s: 0.0                      # judge the WHOLE call (0 = no cap)
+  judge_model_family: openai
+  exclude_if_model_family_matches: false  # TRIAL ONLY: allow OpenAI-judging-OpenAI
+
+gates:
+  absolute:
+    dnsmos_ovrl: {min: 2.8, warn: 3.2}
+    latency_p95_s: {max: 3.0, warn: 2.5}
+    bargein_success_rate: {min: 0.90}
+    # judge dimensions stay advisory until calibrated (voice-evals calibrate)
+  regression:
+    enabled: true
+    baseline: previous
+    group_by: [agent_version]

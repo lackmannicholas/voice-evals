@@ -1,0 +1,104 @@
+RUBRIC_VERSION: v2
+
+You are scoring independent dimensions of a voice agent's performance on a phone
+call. When you are given the FULL conversation (agent + caller), judge the whole
+interaction: the caller's apparent emotional state, the flow of the conversation,
+and how well the agent handled it — not just how the agent sounds in isolation.
+Each dimension is scored 1 to 5, where 5 is always best and 1 is always worst.
+Score each dimension on its own terms. Do not let a problem in one dimension
+drag down the others. For every dimension, first write one or two sentences of
+reasoning grounded in what you actually heard (cite timestamps as m:ss), then
+give the integer score.
+
+------------------------------------------------------------------------
+1. NATURALNESS — does the agent's voice sound like a real human?
+   Listen for: synthetic timbre, robotic or "TTS" artifacts, metallic or buzzy
+   quality, unnatural breaths or their total absence, audio glitches.
+   5 = Indistinguishable from a recorded human; warm, organic.
+   3 = Clearly synthetic but acceptable; a listener would tell it is AI.
+   1 = Heavily robotic, buzzy, or artifact-ridden; unpleasant to listen to.
+
+2. PROSODY — is the intonation, stress, and rhythm appropriate for the content?
+   Listen for: flat/monotone delivery, stress on the wrong words, question
+   melody on statements (or vice versa), list items run together, emphasis that
+   fights the meaning.
+   5 = Expressive and correct; emphasis and melody match the meaning.
+   3 = Somewhat flat or generic, but not misleading.
+   1 = Monotone or actively wrong intonation that obscures meaning.
+
+3. FLUENCY — is the speech free of unnatural disruptions?
+   (Higher = MORE fluent / FEWER problems. A score of 5 means clean speech.)
+   Listen for: mid-word cut-offs, clipped first/last syllables, stutters or
+   repeated word fragments, audible splice seams, dropouts, and UNNATURAL
+   PAUSES — gaps inside or between phrases that a human would not make.
+   5 = Perfectly fluent; no cut-offs, no glitchy pauses, clean phrase boundaries.
+   3 = One or two minor disruptions or slightly awkward pauses.
+   1 = Frequent cut-offs, stutters, dropouts, or jarring mid-utterance gaps.
+
+4. PACE — is the speaking rate appropriate and well-controlled?
+   Listen for: rushed delivery, words crammed together, trailing off at phrase
+   ends, unnaturally slow or dragging speech, abrupt rushed endings.
+   5 = Comfortable, well-modulated rate; speeds up/slows appropriately.
+   3 = A little fast or slow overall but followable.
+   1 = So rushed or so slow that it harms comprehension or feels unnatural.
+
+5. RESPONSIVENESS — does the agent sound prompt and engaged when responding?
+   (Judge the PERCEIVED responsiveness from the audio: does the reply come in
+   with natural timing and energy, or does it feel laggy, hesitant, or absent?
+   Precise latency numbers are measured separately; here judge the felt sense.)
+   5 = Replies land with natural, conversational timing and engaged energy.
+   3 = Noticeable but tolerable lag or slightly disengaged delivery.
+   1 = Long dead air before responses, or flat/checked-out delivery.
+
+6. EMOTIONAL_ALIGNMENT — does the tone fit the situation?
+   Listen for: cheerful tone over a complaint, cold tone over good news, tone
+   that ignores apparent caller frustration, tonal whiplash between turns.
+   5 = Tone is well-matched and steady for the apparent situation.
+   3 = Generic/neutral tone; neither well-matched nor jarring.
+   1 = Tone clearly clashes with the situation (e.g. upbeat during distress).
+
+7. INTELLIGIBILITY — how easy is it to understand the agent end to end?
+   Listen for: slurring, mumbling, mispronunciations, words lost under noise,
+   garbled segments.
+   5 = Effortless to understand throughout.
+   3 = Mostly clear; a few words need effort or replay.
+   1 = Significant portions are hard or impossible to make out.
+
+8. CONVERSATIONAL_FLOW — does the conversation move naturally end to end?
+   (Judge the whole interaction, both speakers.) Listen for: smooth turn-taking,
+   appropriate handling of pauses and interruptions, the agent letting the caller
+   finish, recovery after talk-over or dead air, coherent progression toward
+   resolution vs stalling, looping, or derailing.
+   5 = Natural, well-paced exchange; turns hand off cleanly; the call progresses.
+   3 = Workable but with some awkward turns, a stall, or a clumsy interruption.
+   1 = Choppy or broken: repeated talk-over, long dead air mishandled, the agent
+       and caller out of sync, or the call going in circles.
+
+9. FRUSTRATION_HANDLING — how well does the agent read and handle the caller's
+   emotional state? (Judge the whole interaction.) Listen for: signs of caller
+   frustration, confusion, or distress (sighs, raised voice, repetition, "no",
+   "that's not what I asked"), and whether the agent NOTICES and responds well —
+   acknowledging, slowing down, clarifying, de-escalating, adjusting course.
+   5 = Caller stays at ease, or rising frustration is recognized and defused.
+   3 = Caller mildly frustrated; agent neither helps much nor makes it worse.
+   1 = Agent ignores or amplifies clear frustration; caller left more upset.
+   (If the caller never shows frustration and the agent is appropriate, score 5.)
+------------------------------------------------------------------------
+
+Then give:
+- OVERALL (1-5): your holistic impression of the agent's spoken quality. This is
+  NOT a strict average; weight what would most affect a real caller.
+- NOTABLE_TIMESTAMPS: list specific moments worth a human's attention, each as
+  "m:ss — short description" (e.g. "0:14 — 2s pause before answering").
+- SUMMARY: two or three sentences a reviewer can read without listening.
+
+IMPORTANT — what NOT to do:
+- Do NOT judge whether the agent's answer was factually correct, complete, or
+  on-policy — that is evaluated elsewhere. You ARE judging how the agent SOUNDED
+  and how it HANDLED the conversation (flow, the caller's emotional state), not
+  whether the information it gave was right.
+- Do NOT assume or reconstruct a verbatim transcript. Base everything on the audio.
+- Do NOT reward longer responses; length is not quality.
+- If you cannot score the audio (silence, no agent speech, corrupted/empty, or
+  too short to assess), set unscoreable=true and give the reason; leave scores
+  at their schema defaults and do not guess.

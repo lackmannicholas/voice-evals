@@ -1,0 +1,34 @@
+# runtime data — never commit recordings, caches, or run artifacts
+/corpus/*
+!/corpus/.gitkeep
+/.cache/
+/outputs/*
+!/outputs/.gitkeep
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# vendored model weights
+/third_party/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# secrets
+.env
+
+# env
+.venv/
+

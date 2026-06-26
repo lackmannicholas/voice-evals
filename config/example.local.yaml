@@ -1,0 +1,31 @@
+# Local-only profile: Layers A + B only. No network, no API keys, no GPU required.
+# Use this in CI by default:  voice-evals run --config config/example.local.yaml
+
+ingest:
+  target_sr: 16000
+  normalize_dbfs: null
+
+scorers:
+  acoustic: [dnsmos, nisqa, utmos, squim]
+  dynamics: [latency, turn_taking, barge_in]
+  judge: []                       # explicitly disabled
+
+dynamics:
+  vad_backend: ten                # ten | silero
+  gap_threshold_s: 1.5
+  bargein_success_window_s: 1.5
+
+gates:
+  absolute:
+    dnsmos_ovrl: {min: 2.8, warn: 3.2}
+    nisqa_discontinuity: {min: 3.0, warn: 3.5}
+    utmos: {min: 3.0, warn: 3.3}
+    latency_p95_s: {max: 3.0, warn: 2.5}
+    bargein_success_rate: {min: 0.90}
+  regression:
+    enabled: true
+    baseline: previous
+    group_by: [agent_version]
+    max_delta:
+      dnsmos_ovrl: 0.15
+      utmos: 0.15

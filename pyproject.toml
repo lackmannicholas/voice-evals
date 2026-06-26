@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice-evals"
+version = "0.1.0"
+description = "Offline, reference-free batch evaluation of AI voice-call audio quality across acoustic, conversational-dynamics, and audio-LLM-judge layers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "RealPage Voice" }]
+keywords = ["voice", "tts", "mos", "speech-quality", "evaluation", "eval"]
+
+# Base install must work with NO GPU and NO API keys.
+# Layer A model backends, Layer B VAD, and the judge live in extras.
+dependencies = [
+    "numpy>=1.24",
+    "soundfile>=0.12",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "pyyaml>=6.0",
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "tqdm>=4.66",
+    "imageio-ffmpeg>=0.4.9",
+]
+
+[project.optional-dependencies]
+# Reference-free acoustic MOS predictors. CPU is fine; no API keys.
+acoustic = [
+    "torch>=2.1",
+    "torchaudio>=2.1",
+    "onnxruntime>=1.16",
+    "librosa>=0.10",
+    "speechmos>=0.0.3",
+]
+# Conversational-dynamics segmentation backends.
+dynamics = [
+    "silero-vad>=5.1",
+    "torch>=2.1",
+    "torchaudio>=2.1",
+]
+# Optional diarization for mono-only corpora (HF-gated weights, free token).
+diarization = [
+    "pyannote.audio>=3.1",
+]
+# Hosted native-audio judge (Gemini).
+judge = [
+    "google-genai>=1.0",
+]
+# Hosted native-audio judge (OpenAI, e.g. gpt-4o-audio-preview).
+judge-openai = [
+    "openai>=1.40",
+]
+# Self-hosted open audio-LLM judge (needs a GPU).
+local-judge = [
+    "transformers>=4.45",
+    "accelerate>=0.30",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+]
+all = [
+    "voice-evals[acoustic,dynamics,diarization,judge,judge-openai,dev]",
+]
+
+[project.scripts]
+voice-evals = "voice_evals.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+voice_evals = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "local: tests that require no network and no API keys",
+    "judge: tests that require a judge API key or a local GPU model",
+    "slow: tests that load heavy model weights",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
