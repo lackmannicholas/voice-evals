@@ -30,12 +30,43 @@ judge:
   judge_model_family: openai
   exclude_if_model_family_matches: false  # TRIAL ONLY: allow OpenAI-judging-OpenAI
 
+# ALL quality metrics are pass/fail here (consistent treatment of LLM-judge and
+# non-LLM metrics). These are STARTING thresholds — calibrate to your corpus
+# (`voice-evals calibrate` for the judge dims). Pure diagnostic counts
+# (n_turns, n_bargein_events, agent_talk_ratio) are intentionally left ungated:
+# an absolute threshold on a count/balance is meaningless out of context.
 gates:
   absolute:
-    dnsmos_ovrl: {min: 2.8, warn: 3.2}
-    latency_p95_s: {max: 3.0, warn: 2.5}
-    bargein_success_rate: {min: 0.90}
-    # judge dimensions stay advisory until calibrated (voice-evals calibrate)
+    # --- acoustic (MOS-style, higher = better) ---
+    dnsmos_ovrl:         {min: 2.8, warn: 3.2}
+    dnsmos_sig:          {min: 3.0, warn: 3.3}
+    dnsmos_bak:          {min: 3.0}
+    dnsmos_p808:         {min: 2.8}
+    utmos:               {min: 3.0, warn: 3.3}   # NOTE: low on telephony codecs; calibrate
+    squim_stoi:          {min: 0.85}
+    squim_pesq:          {min: 2.0, warn: 2.5}
+    squim_sisdr:         {min: 0.0}              # dB; lenient starting floor
+    # --- dynamics ---
+    latency_p50_s:       {max: 1.7}
+    latency_p95_s:       {max: 3.0, warn: 2.5}
+    latency_p99_s:       {max: 4.0}
+    max_gap_s:           {max: 3.0}
+    overlap_ratio:       {max: 0.15}
+    bargein_latency_p50_s: {max: 0.5}
+    bargein_latency_p95_s: {max: 1.0}
+    bargein_success_rate:  {min: 0.90}
+    bargein_false_alarm_rate: {max: 0.10}
+    # --- LLM audio judge (1-5, higher = better): fail below 3, warn below 4 ---
+    judge_naturalness:         {min: 3, warn: 4}
+    judge_prosody:             {min: 3, warn: 4}
+    judge_fluency:             {min: 3, warn: 4}
+    judge_pace:                {min: 3, warn: 4}
+    judge_responsiveness:      {min: 3, warn: 4}
+    judge_emotional_alignment: {min: 3, warn: 4}
+    judge_intelligibility:     {min: 3, warn: 4}
+    judge_conversational_flow: {min: 3, warn: 4}
+    judge_frustration_handling: {min: 3, warn: 4}
+    judge_overall:             {min: 3, warn: 4}
   regression:
     enabled: true
     baseline: previous

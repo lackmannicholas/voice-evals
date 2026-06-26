@@ -44,11 +44,24 @@ gates:
     squim_pesq: {min: 2.0, warn: 2.5}
     latency_p95_s: {max: 3.0, warn: 2.5}
     latency_p50_s: {max: 1.7}
+    max_gap_s: {max: 3.0}
+    overlap_ratio: {max: 0.15}
     bargein_success_rate: {min: 0.90}
-    # Judge gates are all `min` floors (5 = best). Enforce only dimensions whose
-    # calibration kappa clears the bar; treat the rest as advisory.
-    # judge_fluency: {min: 3}
-    # judge_naturalness: {min: 3}
+    bargein_false_alarm_rate: {max: 0.10}
+    # LLM audio judge (1-5, higher = better): gated like every other metric for
+    # consistent pass/fail. Starting floors — recalibrate per dimension with
+    # `voice-evals calibrate` (raise the floor for dims the judge agrees with
+    # humans on; relax low-kappa dims). Dormant until the judge is enabled.
+    judge_naturalness:          {min: 3, warn: 4}
+    judge_prosody:              {min: 3, warn: 4}
+    judge_fluency:              {min: 3, warn: 4}
+    judge_pace:                 {min: 3, warn: 4}
+    judge_responsiveness:       {min: 3, warn: 4}
+    judge_emotional_alignment:  {min: 3, warn: 4}
+    judge_intelligibility:      {min: 3, warn: 4}
+    judge_conversational_flow:  {min: 3, warn: 4}
+    judge_frustration_handling: {min: 3, warn: 4}
+    judge_overall:              {min: 3, warn: 4}
   regression:
     enabled: true
     baseline: previous
