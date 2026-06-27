@@ -1,0 +1,44 @@
+# Scenario manifest — hard cases mined from production. Each entry describes how a
+# difficult caller BEHAVES (goal + persona drive the user-simulator); correctness /
+# tool-call success is owned by your text/OTel evals, NOT scored here.
+#
+# Run:  voice-evals simulate --scenarios scenarios/example.yaml \
+#         --agent-version pr-1234 --agent-instructions path/to/agent.txt \
+#         --baseline-version main --baseline-instructions path/to/main_agent.txt
+# Try the harness with no API:  voice-evals simulate --scenarios scenarios/example.yaml --mock --baseline-version main
+
+scenarios:
+  - id: broken_ac_frustrated
+    source_call_id: "766cd411f1a48e7c"   # the real call where the agent mishandled frustration
+    domain: "a property leasing / resident-support phone call"
+    goal: "report that the apartment AC is broken and get a repair scheduled today"
+    opening: "My AC has been broken for two days and it's 90 degrees in here."
+    persona:
+      name: frustrated_resident
+      style: "terse, irritated; short clipped sentences; interrupts"
+      patience: low
+      adversarial: true
+      emotional_arc: "starts annoyed; escalates to angry if not acknowledged or if put on hold"
+      voice: alloy
+    max_turns: 6
+    hangup_when: "a repair is scheduled with a clear time, or you give up in anger"
+    barge_in:
+      enabled: true          # impatient caller talks over the agent (telephony only)
+      after_agent_s: 2.0     # cut in once the agent has rambled ~2s
+      max_barge_ins: 2
+    tags: [maintenance, frustration, escalation, barge-in]
+
+  - id: rent_due_confused_elderly
+    domain: "a property leasing / resident-support phone call"
+    goal: "find out exactly how much rent is owed and how to pay it"
+    opening: "Hello dear, I got a letter about my rent and I'm a little confused."
+    persona:
+      name: confused_elderly_caller
+      style: "slow, polite, easily lost; asks for repetition; goes on tangents"
+      patience: high
+      adversarial: false
+      emotional_arc: "calm but increasingly anxious if the agent rushes or uses jargon"
+      voice: shimmer
+    max_turns: 7
+    hangup_when: "you understand the amount and how to pay, or you decide to call your daughter instead"
+    tags: [billing, accessibility, clarity]

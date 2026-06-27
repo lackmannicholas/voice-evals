@@ -27,6 +27,12 @@ class Secrets(BaseSettings):
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     google_api_key: Optional[str] = Field(default=None, alias="GOOGLE_API_KEY")
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    twilio_account_sid: Optional[str] = Field(default=None, alias="TWILIO_ACCOUNT_SID")
+    twilio_auth_token: Optional[str] = Field(default=None, alias="TWILIO_AUTH_TOKEN")
+    # telephony connection params — not secret, but convenient to keep in .env
+    twilio_from_number: Optional[str] = Field(default=None, alias="TWILIO_FROM_NUMBER")
+    twilio_agent_number: Optional[str] = Field(default=None, alias="TWILIO_AGENT_NUMBER")
+    public_stream_url: Optional[str] = Field(default=None, alias="PUBLIC_STREAM_URL")
     hf_token: Optional[str] = Field(default=None, alias="HF_TOKEN")
 
     @property
@@ -45,6 +51,10 @@ class IngestConfig(BaseModel):
     )
     min_duration_s: float = 0.5  # warn (don't fail) below this
     max_duration_s: float = 1800.0  # warn (don't fail) above this (30 min)
+    # Production default: clip_id = content hash (re-encode-stable, dedups re-uploads).
+    # Simulated corpora set this True so each (scenario, version, run) stays a DISTINCT
+    # clip even when audio coincides — otherwise content-dedup collapses k-run samples.
+    identity_from_call_id: bool = False
 
 
 class AcousticConfig(BaseModel):
@@ -123,6 +133,39 @@ class CalibrationConfig(BaseModel):
     golden_path: str = "calibration/golden_set.csv"
 
 
+class SimulateConfig(BaseModel):
+    """Driver/simulator (WALK) settings — produces recordings the evaluator scores."""
+
+    k_runs: int = 3  # runs per scenario per agent version (sims are stochastic)
+    max_turns: int = 8
+    max_regen: int = 2  # regenerate a run this many times if simulation is invalid
+    # user simulator (persona-conditioned caller)
+    user_sim_model: str = "gpt-4o"  # text model that generates the caller's lines
+    user_sim_temperature: float = 0.8  # >0 so k runs actually differ (avoid dedup collapse)
+    tts_model: str = "gpt-4o-mini-tts"
+    # agent under test (OpenAI Realtime by default; swap for your own AgentBackend)
+    agent_model: str = "gpt-realtime"
+    agent_voice: str = "alloy"
+    agent_instructions_path: Optional[str] = None  # your agent's system prompt
+    turn_timeout_s: float = 60.0  # wall-clock cap on one agent response (avoids hangs)
+
+
+class TelephonyConfig(BaseModel):
+    """Twilio Media Streams caller — places a real outbound call to the agent's
+    number and runs the caller-bot over the call's μ-law/8kHz audio. The websocket
+    is embedded; you only run the command + a tunnel to its port (Twilio creds and
+    SIDs come from the environment/.env)."""
+
+    from_number: Optional[str] = None  # your Twilio dev number (caller ID)
+    agent_number: Optional[str] = None  # the agent's number to dial
+    public_url: Optional[str] = None  # wss://<tunnel>/caller — Twilio connects here
+    host: str = "127.0.0.1"  # bind local-only; the tunnel (ngrok) forwards to it
+    port: int = 8080
+    vad_rms: float = 0.02  # agent-speech energy threshold (on the 8k call audio)
+    end_silence_ms: int = 600  # silence after agent speech that marks a turn end
+    max_call_s: float = 180.0  # hard cap per call
+
+
 class Config(BaseModel):
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     acoustic: AcousticConfig = Field(default_factory=AcousticConfig)
@@ -132,6 +175,8 @@ class Config(BaseModel):
     gates: GatesConfig = Field(default_factory=GatesConfig)
     runner: RunnerConfig = Field(default_factory=RunnerConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
+    simulate: SimulateConfig = Field(default_factory=SimulateConfig)
+    telephony: TelephonyConfig = Field(default_factory=TelephonyConfig)
 
     # Filesystem layout (relative to project root unless absolute).
     corpus_dir: Path = Path("corpus")

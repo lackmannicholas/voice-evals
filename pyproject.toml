@@ -51,9 +51,21 @@ diarization = [
 judge = [
     "google-genai>=1.0",
 ]
-# Hosted native-audio judge (OpenAI, e.g. gpt-4o-audio-preview).
+# Hosted native-audio judge (OpenAI, e.g. gpt-audio).
 judge-openai = [
     "openai>=1.40",
+]
+# Driver/simulator (WALK): persona user-simulator + OpenAI Realtime agent connector.
+# websockets is pinned to the range the openai realtime client's sync recv() needs.
+simulate = [
+    "openai>=1.40",
+    "websockets>=14,<16",
+]
+# Telephony caller: place a real Twilio call and bridge audio over Media Streams.
+telephony = [
+    "openai>=1.40",
+    "twilio>=9.0",
+    "websockets>=14,<16",
 ]
 # Self-hosted open audio-LLM judge (needs a GPU).
 local-judge = [
@@ -65,7 +77,7 @@ dev = [
     "pytest-mock>=3.12",
 ]
 all = [
-    "voice-evals[acoustic,dynamics,diarization,judge,judge-openai,dev]",
+    "voice-evals[acoustic,dynamics,diarization,judge,judge-openai,simulate,telephony,dev]",
 ]
 
 [project.scripts]

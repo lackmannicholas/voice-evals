@@ -129,10 +129,17 @@ def _decode(
         raise RuntimeError(f"ffmpeg decode failed for {src}: {cp.stderr.strip()[-500:]}")
 
 
-def _pcm_clip_id(mono16k_path: Path) -> str:
-    """blake2b of the decoded mono 16-bit PCM samples (re-encode-stable identity)."""
+def _pcm_clip_id(mono16k_path: Path, salt: Optional[str] = None) -> str:
+    """blake2b of the decoded mono 16-bit PCM samples (re-encode-stable identity).
+
+    ``salt`` (e.g. a sidecar call_id) makes otherwise-identical audio resolve to a
+    distinct clip — used for simulated corpora so repeated/identical runs aren't
+    collapsed by content dedup."""
     data, _ = sf.read(str(mono16k_path), dtype="int16", always_2d=False)
     h = hashlib.blake2b(np.ascontiguousarray(data).tobytes(), digest_size=20)
+    if salt:
+        h.update(b"\x00")
+        h.update(salt.encode())
     return h.hexdigest()
 
 
@@ -242,7 +249,8 @@ class Ingestor:
         _decode(src, tmp_mono, channels=1, rate=self.config.ingest.target_sr)
         if norm is not None:
             _apply_normalization(tmp_mono, norm)
-        clip_id = _pcm_clip_id(tmp_mono)
+        salt = meta.call_id if (self.config.ingest.identity_from_call_id and meta.call_id) else None
+        clip_id = _pcm_clip_id(tmp_mono, salt=salt)
 
         out_dir = self.cache.audio_dir_for(clip_id)
         mono16k_path = out_dir / "mono16k.wav"

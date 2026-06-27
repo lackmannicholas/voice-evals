@@ -61,7 +61,10 @@ class BargeInScorer(BaseScorer):
         if n == 0:
             return {"n_bargein_events": 0.0}, {"source": source, "attempts": []}
 
-        latencies = [a["stop_latency_s"] for a in attempts]
+        # only resolved stops feed the latency percentiles — a failed/ignored barge
+        # (no stop) must not inject a synthetic latency that skews p50/p95
+        latencies = [a["stop_latency_s"] for a in attempts
+                     if a.get("success") and a["stop_latency_s"] is not None]
         successes = sum(1 for a in attempts if a["success"])
         # A false alarm = agent yielded to a confirmed sub-threshold backchannel.
         # If the caller utterance duration is unknown (no end event), we cannot

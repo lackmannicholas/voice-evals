@@ -47,6 +47,9 @@ pip install -e .                 # base: ingestion, runner, cache, report, gates
 pip install -e ".[acoustic]"     # DNSMOS, NISQA, UTMOS, SQUIM
 pip install -e ".[dynamics]"     # silero-vad segmentation
 pip install -e ".[judge]"        # google-genai (hosted Gemini judge)
+pip install -e ".[judge-openai]" # openai (gpt-audio judge)
+pip install -e ".[simulate]"     # driver/simulator: user-sim + OpenAI Realtime agent
+pip install -e ".[telephony]"    # real Twilio call backend (barge-in over real telephony)
 pip install -e ".[all]"          # everything + dev/test deps
 ```
 
@@ -77,6 +80,8 @@ Other commands:
 
 ```bash
 voice-evals ingest --corpus corpus/                 # decode/normalize only; warm the cache
+voice-evals simulate --scenarios scenarios/example.yaml --mock --baseline-version main  # dev-loop A/B
+voice-evals call --scenarios scenarios/example.yaml --to +1XXXXXXXXXX --public-url wss://<tunnel>/caller  # real telephony + barge-in
 voice-evals run --no-judge --no-cache               # force local-only / bypass result cache
 voice-evals run --baseline previous --strict        # fail (exit 1) on any gate violation
 voice-evals report --run outputs/runs/<id>          # regenerate report.html from run.json
@@ -124,6 +129,99 @@ comparison and regression**, not certifying absolute MOS. The decode path is
 byte-stable so scores are comparable across runs.
 
 ---
+
+## Dev-loop evaluation: driving scenarios through the agent (the simulator)
+
+The pieces above are the **evaluator** — they score a recording. To get pre-merge
+signal on whether an agent change *improved the experience*, you also need a
+**driver** that produces recordings by running scenarios through the agent. That's
+`voice_evals.simulate`.
+
+The field has converged (EVA-Bench, τ²-Bench, Coval) on **live simulation, not
+audio replay**: you can't replay a recorded caller because a changed agent makes
+the conversation diverge (the Waymo "don't replay sensor logs" problem). So a
+**persona-conditioned user-simulator** holds a live multi-turn conversation with
+the agent, seeded from a bad production call:
+
+```
+scenario (mined from a bad call)         voice_evals.simulate            voice-evals evaluator
+  goal + persona + emotional arc  ──►  UserSimulator ⇄ Agent  ──►  recording + event log  ──►  scores + A/B regression
+                                       (multi-turn, live audio)    (dual-channel + sidecar)    (by agent_version)
+```
+
+The simulator's only job is to produce a dual-channel recording + event log +
+transcript. Scoring is the **unchanged** evaluator — and the event log gives
+**exact** Layer-B timing. **Scope:** this repo scores the *audio experience* only;
+task/tool-call/information correctness is owned by your text/OTel evals. A
+scenario's `goal` exists to make the simulated caller behave realistically (and
+get frustrated when mishandled), **not** to score completion here.
+
+```bash
+# Try the harness with no API (mock backends):
+voice-evals simulate --scenarios scenarios/example.yaml --mock --baseline-version main
+
+# Real run against your agent (A/B candidate vs main), OPENAI_API_KEY in .env:
+voice-evals simulate --scenarios scenarios/example.yaml \
+  --agent-version pr-1234   --agent-instructions path/to/agent.txt \
+  --baseline-version main   --baseline-instructions path/to/main_agent.txt \
+  -k 5            # runs per scenario; sims are stochastic, so gate on aggregates
+```
+
+Key design choices (all research-grounded):
+- **Multi-turn from the start** — voice failures live in the flow, not one turn.
+- **k runs per scenario, aggregate gating** — trial stochasticity dominates variance;
+  one pass/fail flaps. Use a stochastic simulator (`user_sim_temperature > 0`) or
+  identical runs dedupe by content hash.
+- **Adversarial personas** (`persona.adversarial: true`) — friendly simulators give a
+  falsely optimistic signal; you mined *bad* calls, so model impatience/tangents.
+- **A/B candidate-vs-baseline** rather than absolute sim scores — simulated users are
+  miscalibrated against humans in absolute terms; relative comparison is reliable.
+  Reuses the `agent_version` regression machinery.
+- **Consistency-check-and-regenerate** — drop and re-run degenerate simulations.
+- The agent backend is **pluggable** (`AgentBackend`): the reference impl drives an
+  OpenAI Realtime session; point it at your agent's prompt, or implement the protocol
+  against your production agent (SIP / your own service).
+
+There are two transports for the agent under test:
+- **OpenAI Realtime (websocket)** — turn-based/half-duplex. Fast local iteration;
+  captures latency, flow, naturalness, prosody, pace, frustration-handling. Does
+  **not** reproduce real-time barge-in (no overlap).
+- **Telephony (real Twilio call)** — full-duplex over real μ-law/8kHz. Reproduces
+  and **measures barge-in**, with production-realistic codec/jitter/latency. ↓
+
+Keep a human spot-check; an LLM judge of an agent in its own model family inflates scores.
+
+### Real telephony + barge-in (`voice-evals call`)
+
+A phone call is inherently full-duplex, so the simulated caller can talk **over**
+the agent and we measure whether/how fast it yields — real barge-in, the thing
+half-duplex can't see. The mechanism is one REST call + a bundled media-stream
+websocket (you set up **no** Twilio infra):
+
+```bash
+# 1. Run your dev agent locally behind a Twilio number + ngrok (Programmable Voice).
+# 2. Expose THIS command's media server via a tunnel; set it as telephony.public_url.
+# 3. Credentials in .env:  TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN  (+ OPENAI_API_KEY)
+voice-evals call --scenarios scenarios/example.yaml \
+  --agent-version pr-1234 --to +1XXXXXXXXXX --public-url wss://<tunnel>/caller
+```
+
+`voice-evals call` dials the number, runs the persona caller-bot full-duplex over
+the call's μ-law audio (it barges in per the scenario's `barge_in` policy), records
+both legs to a dual-channel recording + event log, and scores it — the **barge-in
+scorer** then reports stop-latency p50/p95, **success rate**, and false-alarm rate.
+A scenario opts into interruptions with:
+
+```yaml
+barge_in: { enabled: true, after_agent_s: 2.0, max_barge_ins: 2 }
+```
+
+A/B across agent versions is across invocations (run `call --agent-version main`,
+change your agent, run `call --agent-version pr-1234`) compared via the regression
+baseline. **v1 notes:** the caller follows its persona/goal arc rather than STT-ing
+the agent's exact words (fine for barge-in timing; content-coherence via STT is the
+next increment); the Twilio dial + media server are verified at the session level
+offline (codec, turn-taking, barge-in timing, recording) and validated by your live call.
 
 ## Conversational dynamics: the channel question
 
@@ -254,9 +352,12 @@ voice-evals/
 ├── .cache/            (gitignored) decoded audio + scorer result cache
 ├── outputs/           (gitignored) run artifacts (report.html, results.parquet, run.json)
 ├── calibration/       golden_set.csv (human labels for judge validation)
+├── scenarios/         scenario manifests for the simulator (mined from prod calls)
 ├── scripts/           fetch_models.py (vendor NISQA)
 ├── src/voice_evals/   models, config, ingest, cache, runner, aggregate, report, cli,
-│                      calibrate, semantic_hook, scorers/{acoustic,dynamics,judge}
+│                      calibrate, semantic_hook, scorers/{acoustic,dynamics,judge},
+│                      simulate/ (driver: scenario, orchestrator, backends, gating,
+│                      telephony — Twilio Media Streams caller + barge-in)
 └── tests/             unit tests + eval_gates/ regression suite
 ```
 
