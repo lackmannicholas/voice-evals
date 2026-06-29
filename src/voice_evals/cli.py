@@ -229,7 +229,7 @@ def call(
     prompt_version: Optional[str] = typer.Option(None, help="Optional prompt-version tag."),
     to: Optional[str] = typer.Option(None, help="Agent phone number to dial (overrides config)."),
     public_url: Optional[str] = typer.Option(None, help="wss URL Twilio streams to (your tunnel)."),
-    out: Optional[Path] = typer.Option(None, help="Output dir."),
+    out: Optional[Path] = typer.Option(None, help="Pin the output dir (default recordings/<timestamp>/)."),
     no_judge: bool = typer.Option(False, "--no-judge", help="Skip the judge when scoring."),
     strict: bool = typer.Option(False, "--strict", help="Exit 1 if absolute gates fail."),
 ) -> None:
@@ -239,7 +239,7 @@ def call(
     server via a tunnel, and set telephony.public_url to that wss URL.
     """
     setup_logging()
-    import shutil
+    from datetime import datetime
 
     from .simulate.scenario import load_scenarios
     from .simulate.telephony import OpenAICascadeCaller
@@ -273,20 +273,24 @@ def call(
             console.print(f"  • {m}")
         raise typer.Exit(code=2)
     scns = load_scenarios(scenarios)
-    out_dir = out or (cfg.resolve_path(cfg.outputs_dir) / "calls")
-    corpus = Path(out_dir) / "corpus"
-    shutil.rmtree(corpus, ignore_errors=True)
+    # Each invocation gets its own dated dir under recordings/ so calls accumulate
+    # into a library instead of overwriting each other. --out pins a specific dir.
+    run_dir = Path(out) if out is not None else (
+        cfg.resolve_path(cfg.recordings_dir) / datetime.now().strftime("%Y%m%d-%H%M%S")
+    )
+    corpus = run_dir / "corpus"
     corpus.mkdir(parents=True, exist_ok=True)
 
     console.print(f"[bold]Calling[/bold] {cfg.telephony.agent_number} for {len(scns)} scenario(s) "
                   f"as agent '{agent_version}' (real Twilio call)")
+    console.print(f"  recordings → {corpus}")
     run_calls(cfg, scns, lambda: OpenAICascadeCaller(cfg), agent_version, corpus, prompt_version)
 
     eval_run = Runner(cfg).run(corpus_dir=corpus)
     base = load_baseline(cfg, current_run_id=eval_run.run_id)
     agg = Aggregator(cfg).evaluate(eval_run, baseline_run=base)
     persist_run(eval_run, cfg)
-    out_run = write_outputs(eval_run, agg, cfg, out_dir=Path(out_dir) / "report")
+    out_run = write_outputs(eval_run, agg, cfg, out_dir=run_dir / "report")
     _print_summary(eval_run, agg, out_run)
     if strict and not agg.passed():
         raise typer.Exit(code=1)

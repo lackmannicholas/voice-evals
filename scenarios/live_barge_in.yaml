@@ -1,0 +1,14 @@
+scenarios:
+  - id: broken_ac_barge
+    goal: "report a broken AC and get a repair scheduled"
+    opening: "My AC has been broken for two days and it's ninety degrees in here."
+    persona:
+      name: frustrated_resident
+      style: "terse, irritated; interrupts; short sentences"
+      patience: low
+      adversarial: true
+      emotional_arc: "starts annoyed; escalates if stalled or not acknowledged"
+      voice: alloy
+    max_turns: 4
+    hangup_when: "a repair is scheduled with a time, or you give up in anger"
+    barge_in: { enabled: true, after_agent_s: 2.0, max_barge_ins: 2 }

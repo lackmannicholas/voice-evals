@@ -138,6 +138,18 @@ def test_agent_yields_while_caller_talking_is_a_success():
     assert m["bargein_success_rate"] == 1.0
 
 
+def test_stream_twiml_normalizes_https_to_wss_and_escapes():
+    from voice_evals.simulate.telephony_live import stream_twiml
+    # ngrok shows https:// — Twilio <Stream> needs wss://; must auto-convert
+    t = stream_twiml("https://abc-123.ngrok-free.app/caller", "broken_ac")
+    assert "url=\"wss://abc-123.ngrok-free.app/caller\"" in t
+    assert "https://" not in t
+    assert "broken_ac" in t
+    # ampersands / quotes in values must be escaped, not break the XML
+    t2 = stream_twiml("wss://h/caller?a=1&b=2", "x&y")
+    assert "&amp;" in t2 and "<Stream" in t2
+
+
 def _free_port() -> int:
     import socket
 

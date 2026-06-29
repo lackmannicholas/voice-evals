@@ -39,17 +39,33 @@ def _twilio_client(config: Config):
     return Client(sec.twilio_account_sid, sec.twilio_auth_token)
 
 
-def place_call(config: Config, scenario_id: str) -> str:
-    """Place the outbound call; Twilio connects its media stream to public_url."""
-    from xml.sax.saxutils import quoteattr  # proper XML attribute escaping
+def _wss(url: str) -> str:
+    """Twilio <Stream> requires a wss:// URL, but ngrok shows an https:// address —
+    normalize the common paste so it just works (same host serves both)."""
+    if url.startswith("https://"):
+        return "wss://" + url[len("https://"):]
+    if url.startswith("http://"):
+        return "ws://" + url[len("http://"):]
+    return url
 
-    tc = config.telephony
-    client = _twilio_client(config)
-    twiml = (
-        f"<Response><Connect><Stream url={quoteattr(tc.public_url)}>"
+
+def stream_twiml(public_url: str, scenario_id: str) -> str:
+    """Build the originating-leg TwiML: bidirectional media stream to our server.
+    Scheme-normalized + XML-attribute-escaped."""
+    from xml.sax.saxutils import quoteattr
+
+    return (
+        f"<Response><Connect><Stream url={quoteattr(_wss(public_url))}>"
         f"<Parameter name='scenario' value={quoteattr(scenario_id)}/>"
         "</Stream></Connect></Response>"
     )
+
+
+def place_call(config: Config, scenario_id: str) -> str:
+    """Place the outbound call; Twilio connects its media stream to public_url."""
+    tc = config.telephony
+    client = _twilio_client(config)
+    twiml = stream_twiml(tc.public_url, scenario_id)
     call = client.calls.create(to=tc.agent_number, from_=tc.from_number, twiml=twiml)
     log.info("placed call %s -> %s (scenario %s)", call.sid, tc.agent_number, scenario_id)
     return call.sid

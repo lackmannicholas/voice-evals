@@ -182,6 +182,9 @@ class Config(BaseModel):
     corpus_dir: Path = Path("corpus")
     cache_dir: Path = Path(".cache")
     outputs_dir: Path = Path("outputs")
+    # Real-call recordings accumulate here, one dated subdir per `call` invocation
+    # (a kept library — never auto-wiped; delete entries by hand as needed).
+    recordings_dir: Path = Path("recordings")
 
     # ------------------------------------------------------------------ #
     @classmethod

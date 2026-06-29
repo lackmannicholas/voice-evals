@@ -35,7 +35,7 @@ acoustic = [
     "torchaudio>=2.1",
     "onnxruntime>=1.16",
     "librosa>=0.10",
-    "speechmos>=0.0.3",
+    "speechmos>=0.0.1",  # PyPI only publishes up to 0.0.1.1
 ]
 # Conversational-dynamics segmentation backends.
 dynamics = [

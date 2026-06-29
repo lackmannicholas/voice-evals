@@ -4,6 +4,8 @@
 /.cache/
 /outputs/*
 !/outputs/.gitkeep
+/recordings/*
+!/recordings/.gitkeep
 
 # python
 __pycache__/
