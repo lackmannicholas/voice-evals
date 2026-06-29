@@ -231,6 +231,7 @@ def call(
     public_url: Optional[str] = typer.Option(None, help="wss URL Twilio streams to (your tunnel)."),
     out: Optional[Path] = typer.Option(None, help="Pin the output dir (default recordings/<timestamp>/)."),
     no_judge: bool = typer.Option(False, "--no-judge", help="Skip the judge when scoring."),
+    no_stt: bool = typer.Option(False, "--no-stt", help="Don't transcribe the agent (caller won't react to its words)."),
     strict: bool = typer.Option(False, "--strict", help="Exit 1 if absolute gates fail."),
 ) -> None:
     """Place a REAL Twilio call to the agent's number and score the audio (incl. barge-in).
@@ -241,6 +242,7 @@ def call(
     setup_logging()
     from datetime import datetime
 
+    from .simulate.openai_backends import OpenAITranscriber
     from .simulate.scenario import load_scenarios
     from .simulate.telephony import OpenAICascadeCaller
     from .simulate.telephony_live import run_calls
@@ -284,7 +286,17 @@ def call(
     console.print(f"[bold]Calling[/bold] {cfg.telephony.agent_number} for {len(scns)} scenario(s) "
                   f"as agent '{agent_version}' (real Twilio call)")
     console.print(f"  recordings → {corpus}")
-    run_calls(cfg, scns, lambda: OpenAICascadeCaller(cfg), agent_version, corpus, prompt_version)
+    console.print(f"  agent STT: {'off (caller is deaf)' if no_stt else f'on ({cfg.simulate.stt_model})'}")
+    transcriber_factory = None if no_stt else (lambda: OpenAITranscriber(cfg))
+    try:
+        run_calls(cfg, scns, lambda: OpenAICascadeCaller(cfg), agent_version, corpus, prompt_version,
+                  transcriber_factory=transcriber_factory)
+    except Exception:
+        # nothing was recorded — don't leave an empty recordings/<timestamp>/ behind
+        if out is None and corpus.exists() and not any(corpus.iterdir()):
+            import shutil
+            shutil.rmtree(run_dir, ignore_errors=True)
+        raise
 
     eval_run = Runner(cfg).run(corpus_dir=corpus)
     base = load_baseline(cfg, current_run_id=eval_run.run_id)

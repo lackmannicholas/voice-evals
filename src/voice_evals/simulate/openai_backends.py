@@ -127,6 +127,38 @@ class OpenAIUserSimulator:
 
 
 # --------------------------------------------------------------------------- #
+# Transcriber: STT for the agent's turns (so the telephony caller can react)
+# --------------------------------------------------------------------------- #
+class OpenAITranscriber:
+    """Transcribes a completed agent turn (μ-law-decoded PCM) to text. The telephony
+    caller has no text channel to a real phone agent — only its audio — so the
+    session STTs each agent turn and feeds the words back into the caller's context."""
+
+    def __init__(self, config: Config):
+        self.cfg = config.simulate
+        self._client = None
+
+    def _c(self):
+        if self._client is None:
+            self._client = _client()
+        return self._client
+
+    def transcribe(self, pcm16: np.ndarray, sr: int) -> str:
+        buf = io.BytesIO()
+        sf.write(buf, np.asarray(pcm16), sr, format="WAV", subtype="PCM_16")
+        buf.seek(0)
+        buf.name = "agent_turn.wav"  # the SDK keys off the file extension
+        try:
+            resp = self._c().audio.transcriptions.create(
+                model=self.cfg.stt_model, file=buf, language="en",
+            )
+            return (getattr(resp, "text", "") or "").strip()
+        except Exception as e:  # noqa: BLE001 - a failed STT must not kill the call
+            log.warning("agent-turn STT failed: %s", e)
+            return ""
+
+
+# --------------------------------------------------------------------------- #
 # Agent under test: OpenAI Realtime (speech-to-speech), turn-based
 # --------------------------------------------------------------------------- #
 class OpenAIRealtimeAgent:

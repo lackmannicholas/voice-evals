@@ -143,6 +143,7 @@ class SimulateConfig(BaseModel):
     user_sim_model: str = "gpt-4o"  # text model that generates the caller's lines
     user_sim_temperature: float = 0.8  # >0 so k runs actually differ (avoid dedup collapse)
     tts_model: str = "gpt-4o-mini-tts"
+    stt_model: str = "gpt-4o-transcribe"  # transcribes the agent's turns so the caller can react
     # agent under test (OpenAI Realtime by default; swap for your own AgentBackend)
     agent_model: str = "gpt-realtime"
     agent_voice: str = "alloy"

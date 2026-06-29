@@ -1,0 +1,21 @@
+scenarios:
+  # Caller is in a noisy public space — their open mic picks up intelligible side
+  # conversations the whole call. Tests the agent's ASR + VAD/turn-detection under
+  # babble: does it mishear, false-trigger, or talk over the caller?
+  - id: noisy_cafe_maintenance
+    goal: "report a clogged kitchen sink and get a plumber scheduled"
+    opening: "Hey, sorry — I'm out grabbing coffee. My kitchen sink is totally clogged."
+    persona:
+      name: distracted_resident
+      style: "casual, a little distracted by their surroundings; normal patience"
+      patience: medium
+      emotional_arc: "friendly; only gets frustrated if the agent keeps mishearing"
+      voice: alloy
+    max_turns: 5
+    hangup_when: "a plumber visit is scheduled with a day/time, or you give up"
+    background:
+      enabled: true
+      gain_db: -20            # clearly audible chatter, well under the caller's voice
+      voices: [echo, onyx]    # background talkers (distinct from the caller's 'alloy')
+      # lines omitted => built-in cafe / side-conversation babble
+    barge_in: { enabled: false }

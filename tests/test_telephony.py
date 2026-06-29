@@ -270,3 +270,83 @@ def test_agent_turn_events_make_latency_and_turntaking_work(tmp_path):
     tt = TurnTakingScorer(Config()).score(clip)
     assert lat.error is None and lat.metrics["n_turns"] >= 1.0     # was: errored
     assert tt.error is None and tt.metrics["agent_talk_ratio"] > 0  # was: 0.0
+
+
+class _RecordingCaller:
+    """Like _MockCaller, but captures the history handed to it each turn."""
+
+    def __init__(self):
+        self.seen_histories: list[list[dict]] = []
+
+    def next_turn(self, scenario, turn_index, history):
+        self.seen_histories.append([dict(h) for h in history])
+        n = int(0.5 * SR8)
+        t = np.linspace(0, 0.5, n, endpoint=False)
+        pcm = (0.3 * np.sin(2 * np.pi * 160 * t) * 32767).astype(np.int16)
+        hangup = (turn_index + 1) >= scenario.max_turns
+        return mulaw_encode(pcm), f"caller turn {turn_index}", hangup
+
+
+class _FakeTranscriber:
+    def __init__(self, text):
+        self.text = text
+        self.calls = 0
+
+    def transcribe(self, pcm16, sr):
+        self.calls += 1
+        assert sr == SR8 and pcm16.size > 0
+        return self.text
+
+
+def test_agent_turn_transcribed_and_caller_reacts():
+    # the reactive-caller fix: the agent's turn is STT'd into the transcript so the
+    # caller-bot's NEXT turn is conditioned on what the agent actually said.
+    scn = Scenario(id="react", max_turns=3, persona=Persona())
+    caller = _RecordingCaller()
+    stt = _FakeTranscriber("we can schedule a technician for tomorrow")
+    s = MediaStreamSession(scn, caller, agent_version="v", transcriber=stt)
+    _feed(s, _voiced(), 40)     # agent turn ~0.8s
+    _feed(s, _silence(), 60)    # silence -> agent turn ends -> STT -> caller replies
+    assert stt.calls >= 1
+    assert {"speaker": "agent", "text": "we can schedule a technician for tomorrow"} in s.transcript
+    assert "stt_final" in [e["kind"] for e in s.events]
+    # the caller actually SAW the agent's line when generating its reply
+    assert any(any(h["speaker"] == "agent" for h in hist) for hist in caller.seen_histories)
+
+
+def test_no_transcriber_keeps_caller_deaf():
+    # without a transcriber (scripted/unit path) the agent is NOT transcribed; the
+    # transcript holds only caller turns, preserving prior behavior.
+    scn = Scenario(id="deaf", max_turns=3, persona=Persona())
+    s = MediaStreamSession(scn, _MockCaller(), agent_version="v")
+    _feed(s, _voiced(), 40); _feed(s, _silence(), 60)
+    assert s.transcript and all(t["speaker"] == "caller" for t in s.transcript)
+    assert "stt_final" not in [e["kind"] for e in s.events]
+
+
+def test_build_background_bed_loops_and_attenuates():
+    from voice_evals.simulate.telephony import build_background_bed
+    seg = (0.5 * np.sin(2 * np.pi * 220 * np.linspace(0, 0.8, int(0.8 * 16000), endpoint=False))
+           ).astype(np.float32)
+    bed = build_background_bed([seg], total_s=4.0, gain_db=-18.0)
+    assert bed is not None and bed.dtype == np.int16
+    assert abs(len(bed) - int(4.0 * SR8)) <= SR8           # ~4s @ 8k (loop-filled)
+    assert 0 < np.max(np.abs(bed)) < 0.5 * 32767           # attenuated well below full scale
+    assert build_background_bed([], 4.0, -18.0) is None    # nothing to build from
+
+
+def test_background_mixes_onto_caller_channel_continuously():
+    # a synthetic always-on bed lets us assert continuous emission deterministically
+    bed = (0.2 * np.sin(2 * np.pi * 200 * np.linspace(0, 1.0, SR8, endpoint=False)) * 32767
+           ).astype(np.int16)
+    scn = Scenario(id="noisy", max_turns=3, persona=Persona())
+    s = MediaStreamSession(scn, _MockCaller(), agent_version="v", background=bed)
+    out_during_agent = _feed(s, _voiced(), 30)             # agent talking; caller not speaking yet
+    # the background streams on the caller channel even while the caller is silent
+    assert any(m["event"] == "media" for m in out_during_agent)
+    _feed(s, _silence(), 60)                               # agent ends -> caller speaks (mixed w/ bg)
+    kinds = [e["kind"] for e in s.events]
+    assert "user_speech_start" in kinds and "user_speech_end" in kinds
+    # caller channel carries audio throughout the call, not only during the spoken turn
+    caller_frames = [p for p in s.placed if p.speaker == "caller"]
+    assert len(caller_frames) > 50

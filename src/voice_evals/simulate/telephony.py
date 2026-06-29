@@ -78,6 +78,39 @@ def f32_16k_to_mulaw8k(wav16k: np.ndarray) -> bytes:
     return mulaw_encode((pcm * 32767.0).astype(np.int16))
 
 
+def build_background_bed(
+    segments_16k: list[np.ndarray], total_s: float = 30.0, gain_db: float = -15.0
+) -> Optional[np.ndarray]:
+    """Lay TTS'd background utterances into a looping, partially-overlapping bed of
+    *intelligible* chatter (two lanes = "a couple of people talking nearby"),
+    normalized then attenuated to ``gain_db``. Returns int16 @ 8 kHz ready to mix
+    onto the caller channel, or None if there's nothing to build from."""
+    segs = [np.asarray(s, np.float32) for s in segments_16k if s is not None and len(s)]
+    if not segs:
+        return None
+    sr16 = 16000
+    n = int(max(5.0, total_s) * sr16)
+    bed = np.zeros(n, np.float32)
+    # lane A: utterances back-to-back with a short gap, looping to fill the bed
+    p, i = 0, 0
+    while p < n:
+        seg = segs[i % len(segs)]; i += 1
+        e = min(p + len(seg), n)
+        bed[p:e] += seg[: e - p]
+        p = e + int(0.4 * sr16)
+    # lane B: time-offset, reordered, a touch quieter -> overlap = babble, not a monologue
+    p, i = int(1.5 * sr16), 1
+    while p < n:
+        seg = segs[i % len(segs)]; i += 1
+        e = min(p + len(seg), n)
+        bed[p:e] += 0.8 * seg[: e - p]
+        p = e + int(0.7 * sr16)
+    peak = float(np.max(np.abs(bed))) or 1.0
+    bed = (bed / peak) * (10.0 ** (gain_db / 20.0))  # normalize, then set background level
+    bed8 = _resample(bed, sr16, SR8)
+    return (np.clip(bed8, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+
 def _rms(pcm16: np.ndarray) -> float:
     return float(np.sqrt(np.mean((pcm16.astype(np.float64) / 32768.0) ** 2))) if pcm16.size else 0.0
 
@@ -91,11 +124,28 @@ class CallerBot(Protocol):
     def next_turn(self, scenario: Scenario, turn_index: int, history: list[dict]) -> tuple[bytes, str, bool]: ...
 
 
+class Transcriber(Protocol):
+    """Speech-to-text for the agent's turns, so the caller can react to its words."""
+
+    def transcribe(self, pcm16: np.ndarray, sr: int) -> str: ...
+
+
+# Built-in side-conversation / public-space chatter for the background bed — short,
+# everyday, and INTELLIGIBLE (the point is words the agent's ASR might latch onto).
+_DEFAULT_BABBLE = [
+    "No, I already told them we'd be there by seven, so let's just go straight from the office.",
+    "Did you catch the end of the game last night? I still can't believe they pulled it off.",
+    "Attention shoppers: the store will be closing in fifteen minutes. Please head to the registers.",
+    "I'm telling you, the new place on Fifth has the best coffee — we should go after this.",
+]
+
+
 class OpenAICascadeCaller:
     """Persona caller for telephony: reuses the OpenAI user-simulator for content,
-    then encodes to μ-law 8 kHz for the call. NOTE (v1): the caller does not STT the
-    agent, so it follows its persona/goal arc rather than reacting to the agent's
-    exact words — fine for barge-in timing; content-coherence (STT) is a later step."""
+    then encodes to μ-law 8 kHz for the call. The session transcribes each agent turn
+    (when a Transcriber is configured) and feeds it back through ``history``, so the
+    caller reacts to what the agent actually said; barge-in timing stays independent
+    of content (it is VAD-driven)."""
 
     def __init__(self, config):
         from .openai_backends import OpenAIUserSimulator
@@ -108,6 +158,23 @@ class OpenAICascadeCaller:
         moves = [SimpleNamespace(speaker=h["speaker"], text=h["text"]) for h in history]
         move = self._us.next_turn(scenario, moves)  # Move(caller, text, audio@16k, hangup)
         return f32_16k_to_mulaw8k(move.audio), move.text, move.hangup
+
+    def make_background(self, scenario: Scenario) -> Optional[np.ndarray]:
+        """TTS the scenario's background voices into a looping chatter bed (int16 @ 8k),
+        or None when the scenario has no background. Called once per call, off the
+        media loop. Reuses the user-simulator's TTS so voices/format stay consistent."""
+        bg = scenario.background
+        if not getattr(bg, "enabled", False):
+            return None
+        lines = bg.lines or _DEFAULT_BABBLE
+        voices = bg.voices or ["echo", "onyx"]
+        segs: list[np.ndarray] = []
+        for i, line in enumerate(lines):
+            try:
+                segs.append(self._us._tts(line, "neutral", voices[i % len(voices)]))
+            except Exception as e:  # noqa: BLE001 - a bad background line shouldn't kill the call
+                log.warning("background TTS failed for line %d: %s", i, e)
+        return build_background_bed(segs, total_s=30.0, gain_db=bg.gain_db)
 
 
 # --------------------------------------------------------------------------- #
@@ -139,6 +206,8 @@ class MediaStreamSession:
         vad_rms: float = 0.02,
         end_silence_ms: int = 600,
         success_window_s: float = 1.5,
+        transcriber: Optional[Transcriber] = None,
+        background: Optional[np.ndarray] = None,
     ):
         self.scenario = scenario
         self.caller = caller
@@ -147,6 +216,9 @@ class MediaStreamSession:
         self.vad_rms = vad_rms
         self.end_silence_ms = end_silence_ms
         self.success_window_ms = int(success_window_s * 1000)
+        self.transcriber = transcriber
+        self._background = background  # int16 @ 8k, looped continuously onto the caller channel
+        self._bg_pos = 0
 
         self.placed: list[_Placed] = []
         self.events: list[dict] = []
@@ -158,6 +230,7 @@ class MediaStreamSession:
         self._agent_speaking = False
         self._agent_in_turn = False  # between agent_tts_start and agent_tts_end
         self._voice_run_start_ms: Optional[int] = None  # start of the CURRENT continuous voice run
+        self._agent_turn_start_ms: Optional[int] = None  # start of the current agent TURN (STT window)
         self._last_agent_voice_ms: Optional[int] = None
         # caller streaming state
         self._caller_queue: list[np.ndarray] = []  # remaining 20 ms frames to emit
@@ -198,6 +271,7 @@ class MediaStreamSession:
             if not self._agent_in_turn:
                 # agent starts a turn — emit the events latency/turn-taking need
                 self._agent_in_turn = True
+                self._agent_turn_start_ms = self._clock_ms
                 self.events.append({"kind": "agent_tts_start", "t_s": round(self._clock_ms / 1000, 3)})
                 self.events.append({"kind": "tts_first_audio", "t_s": round(self._clock_ms / 1000, 3)})
             self._agent_speaking = True
@@ -261,21 +335,64 @@ class MediaStreamSession:
             self.should_hangup = True
 
     def _pump_caller(self) -> list[dict]:
-        if not self._caller_queue:
+        have_speech = bool(self._caller_queue)
+        # background (the open mic) streams continuously; without it the caller
+        # channel is silent between turns (the original behavior, unit-test path).
+        if not have_speech and self._background is None:
             return []
-        frame = self._caller_queue.pop(0)
+        speech = self._caller_queue.pop(0) if have_speech else None
+        frame = speech if speech is not None else np.zeros(FRAME_SAMPLES, np.int16)
+        if self._background is not None:
+            frame = self._mix(frame, self._next_bg_frame(len(frame)))
         self.placed.append(_Placed("caller", self._clock_ms, frame))
-        if not self._caller_queue:  # caller turn just ended
+        if have_speech and not self._caller_queue:  # the caller's SPEECH turn just ended
             self.events.append({"kind": "user_speech_end", "t_s": round((self._clock_ms + FRAME_MS) / 1000, 3)})
         payload = base64.b64encode(mulaw_encode(frame)).decode()
         return [{"event": "media", "media": {"payload": payload}}]
 
+    def _next_bg_frame(self, length: int) -> np.ndarray:
+        """Next ``length`` samples of the background bed, looping seamlessly."""
+        bg = self._background
+        n = len(bg)
+        i = self._bg_pos % n
+        f = bg[i:i + length] if i + length <= n else np.concatenate([bg[i:], bg[: length - (n - i)]])
+        self._bg_pos = (i + length) % n
+        return f
+
+    @staticmethod
+    def _mix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        return np.clip(a.astype(np.int32) + b.astype(np.int32), -32768, 32767).astype(np.int16)
+
     def _end_agent_turn(self, t_ms: int) -> None:
         """Close an agent turn (emit agent_tts_end once) — used by both the natural
-        turn-end and the barge-yield paths so dynamics see complete agent turns."""
+        turn-end and the barge-yield paths so dynamics see complete agent turns.
+        Also transcribes the turn so the caller can react to what the agent said."""
         if self._agent_in_turn:
             self.events.append({"kind": "agent_tts_end", "t_s": round(t_ms / 1000, 3)})
+            self._record_agent_turn_text(t_ms)
             self._agent_in_turn = False
+            self._agent_turn_start_ms = None
+
+    def _record_agent_turn_text(self, end_ms: int) -> None:
+        """STT the agent's just-finished turn and append it to the transcript so the
+        caller-bot's next utterance is conditioned on what the agent actually said.
+        Only runs when a transcriber is configured (the live path); scripted unit
+        tests leave it None and keep the prior deaf behavior. NOTE: synchronous —
+        like the caller's own generation it briefly blocks the media loop."""
+        if self.transcriber is None or self._agent_turn_start_ms is None:
+            return
+        start = self._agent_turn_start_ms
+        frames = [p.pcm8k for p in self.placed
+                  if p.speaker == "agent" and start <= p.start_ms <= end_ms]
+        if not frames:
+            return
+        pcm = np.concatenate(frames)
+        if pcm.size < int(0.2 * SR8):  # too short to be a real utterance
+            return
+        text = self.transcriber.transcribe(pcm, SR8)
+        if text:
+            self.transcript.append({"speaker": "agent", "text": text})
+            self.events.append({"kind": "stt_final", "t_s": round(end_ms / 1000, 3)})
 
     def _record_agent_interrupted(self, t_ms: int) -> None:
         self.events.append({"kind": "agent_interrupted", "t_s": round(t_ms / 1000, 3)})

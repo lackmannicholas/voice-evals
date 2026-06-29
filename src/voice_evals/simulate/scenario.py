@@ -40,6 +40,18 @@ class BargeInPolicy(BaseModel):
     #  false-alarm metric they exercise — are a follow-up increment, not yet wired)
 
 
+class BackgroundNoise(BaseModel):
+    """Synthesized environment noise on the caller's (always-open) mic: intelligible
+    background voices (TTS from extra speakers) mixed CONTINUOUSLY onto the caller
+    channel, so the agent's ASR + VAD/turn-detection are tested under cafe / public-
+    space conditions — the agent hears the side conversation even while it talks."""
+
+    enabled: bool = False
+    gain_db: float = -15.0  # bed level vs. the caller's own voice (lower = quieter background)
+    voices: list[str] = Field(default_factory=lambda: ["echo", "onyx"])  # TTS voices for the talkers
+    lines: Optional[list[str]] = None  # what the background says; None => a built-in babble script
+
+
 class Scenario(BaseModel):
     id: str
     source_call_id: Optional[str] = None  # provenance: which prod call seeded this
@@ -51,6 +63,7 @@ class Scenario(BaseModel):
     max_turns: int = 8  # caller turns before forced stop
     hangup_when: str = "you get what you need, or you give up in frustration"
     barge_in: BargeInPolicy = Field(default_factory=BargeInPolicy)
+    background: BackgroundNoise = Field(default_factory=BackgroundNoise)
     tags: list[str] = Field(default_factory=list)
 
     # tagged onto produced recordings so voice-evals can group/gate by them
@@ -60,6 +73,7 @@ class Scenario(BaseModel):
             "source_call_id": self.source_call_id,
             "persona": self.persona.name,
             "adversarial": self.persona.adversarial,
+            "background": self.background.enabled,
             "tags": self.tags,
         }
 

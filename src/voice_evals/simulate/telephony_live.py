@@ -22,7 +22,7 @@ from ..config import Config, load_secrets
 from ..logging_util import get_logger
 from .base import SimulatedCall
 from .scenario import Scenario
-from .telephony import CallerBot, MediaStreamSession
+from .telephony import CallerBot, MediaStreamSession, Transcriber
 
 log = get_logger(__name__)
 
@@ -119,14 +119,15 @@ async def connection_handler(ws, session_factory, done: asyncio.Future, holder: 
 
 async def _serve_one_call(
     config: Config, scenario: Scenario, caller: CallerBot, agent_version: str,
-    prompt_version: Optional[str], out_dir: Path, placer=place_call, hangup=_hangup,
+    prompt_version: Optional[str], out_dir: Path, transcriber: Optional[Transcriber] = None,
+    placer=place_call, hangup=_hangup,
 ) -> SimulatedCall:
     """Start a one-shot media-stream server, place the call, run the session, finalize.
 
-    NOTE (live-path): the caller-bot's OpenAI calls are synchronous; a future
-    increment should pre-generate/prefetch turns off-loop so generation never
-    blocks inbound media. The recorded timeline stays correct regardless (clock is
-    frame-driven), but live outbound pacing can stall during generation."""
+    NOTE (live-path): the caller-bot's OpenAI calls AND the per-turn agent STT are
+    synchronous; a future increment should run them off-loop so neither blocks
+    inbound media. The recorded timeline stays correct regardless (clock is
+    frame-driven), but live outbound pacing can stall during generation/STT."""
     import websockets
 
     tc = config.telephony
@@ -134,9 +135,16 @@ async def _serve_one_call(
     done: asyncio.Future = loop.create_future()
     holder: dict = {}
 
+    # synthesize the background-chatter bed once, before serving (off the media loop)
+    background = caller.make_background(scenario) if hasattr(caller, "make_background") else None
+    if background is not None:
+        log.info("background bed: %.0fs of chatter @ %.0f dB on %s", len(background) / 8000,
+                 scenario.background.gain_db, scenario.id)
+
     def factory():
         return MediaStreamSession(scenario, caller, agent_version, prompt_version,
-                                  vad_rms=tc.vad_rms, end_silence_ms=tc.end_silence_ms)
+                                  vad_rms=tc.vad_rms, end_silence_ms=tc.end_silence_ms,
+                                  transcriber=transcriber, background=background)
 
     async def handler(ws):
         await connection_handler(ws, factory, done, holder)
@@ -153,19 +161,30 @@ async def _serve_one_call(
 
     session = holder.get("session")
     if session is None:
-        raise RuntimeError("Twilio never connected the media stream (check public_url / tunnel)")
+        raise RuntimeError(
+            "Twilio never connected the media stream. Most likely (a) the agent "
+            "answered then ended the call in ~0s — an inbound webhook that transfers/"
+            "<Dial>s out instead of streaming, so its leg dies before our "
+            "<Connect><Stream> attaches; less likely (b) public_url/the tunnel is "
+            "unreachable. Check the agent leg in the Twilio console: 'completed, 0s' "
+            "points to (a) (fix the agent to stay on the line); a failed/never-"
+            "answered leg points to (b)."
+        )
     return session.finalize(out_dir)
 
 
 def run_calls(
     config: Config, scenarios: list[Scenario], caller_factory: Callable[[], CallerBot],
     agent_version: str, out_dir: Path, prompt_version: Optional[str] = None,
+    transcriber_factory: Optional[Callable[[], Transcriber]] = None,
 ) -> list[SimulatedCall]:
     """Place one real call per scenario (sequentially) and return the recordings."""
     calls: list[SimulatedCall] = []
     for scenario in scenarios:
+        transcriber = transcriber_factory() if transcriber_factory else None
         call = asyncio.run(
-            _serve_one_call(config, scenario, caller_factory(), agent_version, prompt_version, Path(out_dir))
+            _serve_one_call(config, scenario, caller_factory(), agent_version,
+                            prompt_version, Path(out_dir), transcriber=transcriber)
         )
         log.info("call done: %s [%s] %.1fs, %d events", scenario.id, agent_version,
                  call.duration_s, len(call.events))
